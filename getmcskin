@@ -17,7 +17,7 @@ set -e
 
 ## about me
 readonly ME="${0##*/}"
-readonly VERSION="0.3"
+readonly VERSION="0.4"
 
 ## usage
 function usage() {
@@ -51,8 +51,11 @@ readonly TMPDIR="${TMP:-/tmp}/${ME}.$$"
 mkdir -p "${TMPDIR}"
 trap 'rm -r ${TMPDIR}' 0
 function makeTmpFile() {
-    local filename="${TMPDIR}/${1:-$RANDOM.tmp}"
-    mktemp "${filename}"
+    local filename="${TMPDIR}/${1:-${RANDOM}.tmp}"
+    (
+        umask 0077
+        : >"${filename}"
+    ) && echo "${filename}"
     return 0
 }
 
@@ -188,7 +191,7 @@ function getSkinUri() {
         local skin_uri="$(
             echo "${skin_json}"                                     |
             jq -r 'select(has("properties")) | .properties[].value' |
-            base64 -D                                               |
+            base64 --decode                                         |
             jq -r '.textures.SKIN.url'
         )"
         curl -s -o "$(makeTmpFile skin.png)" "${skin_uri}"

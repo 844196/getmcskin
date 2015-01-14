@@ -19,43 +19,41 @@ function countDown() {
 
 # test
 testEchoUsage() {
-    local usage="$(~/getmcskin.sh -h 2>&1)"
-    assertNotNull "${usage}"
+    ./getmcskin -h
     assertEquals 0 $?
 }
 
 testEchoVersion() {
-    local version="$(~/getmcskin.sh -v 2>&1)"
-    assertNotNull "${version}"
+    ./getmcskin -v
     assertEquals 0 $?
 }
 
 testFalseExitNoUsername() {
-    ~/getmcskin.sh >/dev/null 2>&1
+    ./getmcskin
     assertEquals 255 $?
 }
 
 testFalseExitInvaildOptionSize() {
-    ~/getmcskin.sh -s foo 844196 >/dev/null 2>&1
+    ./getmcskin -s foo 844196
     assertEquals 3 $?
 }
 
 testFalseExitInvaildOptionOutputPath() {
-    ~/getmcskin.sh -o /foo/save.png 844196 >/dev/null 2>&1
+    ./getmcskin -o /foo/save.png 844196
     assertEquals 4 $?
 }
 
 testTrueExitPipe() {
     countDown '30'
-    echo '844196' | ~/getmcskin.sh >/dev/null 2>&1
+    echo '844196' | ./getmcskin
     assertEquals 0 $?
 }
 
 testTrueExitArgs() {
     countDown '30'
-    ~/getmcskin.sh 844196 >/dev/null 2>&1
+    ./getmcskin 844196
     assertEquals 0 $?
 }
 
 
-. shunit2
+. ./shunit2-2.1.6/src/shunit2

@@ -1,4 +1,5 @@
 # getmcskin
+[![](https://img.shields.io/travis/844196/getmcskin.svg?style=flat)](https://travis-ci.org/844196/getmcskin)
 [![](http://img.shields.io/github/tag/844196/getmcskin.svg?style=flat)](https://github.com/844196/getmcskin/releases)
 [![](http://img.shields.io/github/issues/844196/getmcskin.svg?style=flat)](https://github.com/844196/getmcskin/issues)
 [![](http://img.shields.io/badge/license-MIT-red.svg?style=flat)](LICENSE)
@@ -52,12 +53,12 @@ $ identify -format "%w %h" ~/Downloads/hyousikinuko.png
 ```shell
 #!/bin/bash
 
-user=('844196' 'hyousikinuko' 'mo_ri_mo_to')
+users=('844196' 'hyousikinuko' 'mo_ri_mo_to')
 
-for villager in "${user[@]}"
+for villager in "${users[@]}"
 do
     sleep 30
-    ~/getmcskin.sh "${villager}" | xargs open
+    getmcskin "${villager}" | xargs open
 done
 ```
 
