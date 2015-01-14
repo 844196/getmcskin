@@ -1,4 +1,4 @@
-#!/bin/bash -e
+#!/bin/bash
 #
 #   @(#) Minecraftのスキンアイコンを取得
 #
@@ -10,133 +10,204 @@
 #
 
 
-# usage
+# initialize
+## option
+set -u
+set -e
+
+## about me
+readonly ME="${0##*/}"
+readonly VERSION="0.3"
+
+## usage
 function usage() {
-    cat <<EOF
-Usage:
-    ${0##*/} [-s size] [-o filename] <Username>
-
-Required:
-    curl, jq, base64, ImageMagick
-
-Options:
-    -h   このヘルプを出力します
-    -s   出力される画像の大きさを指定します (default: 800)
-    -o   出力するファイルを指定します (default: ~/<Username>.png)
-
-ErrorCode:
-     42  ネットワークに接続できません.
-    173  時間を置いてから再度実行してください.
-    204  指定されたユーザーネームは存在しません.
-EOF
-    exit 0
+    cat <<-EOF 1>&2
+	Usage:
+	    ${ME} [optinos] username
+	
+	Required:
+	    curl, jq, base64, ImageMagick
+	
+	Argument:
+	    username        Minecraft Username
+	
+	Options:
+	    -v, --version   Print version and exit successfully.
+	    -h, --help      Print this help and exit successfully.
+	    -s, --size      Specify the output image size. (default: 800)
+	    -o, --output    Specify the output path. (default: ./username.png)
+	EOF
+    return 0
 }
 
-
-# error
+## error
 function error() {
-    echo "${0##*/}: ${1}" 1>&2
+    echo "${ME}: ${1}" 1>&2
     exit "${2:-1}"
 }
 
-
-# get options
-while getopts :s:o:h option
-do
-    case ${option} in
-        'h' ) usage;;
-        's' ) output_size=${OPTARG};;
-        'o' ) output_name=${OPTARG};;
-        \?  ) error "存在しないオプションです";;
-        :   ) error "オプションの引数が足りません";;
-    esac
-done
-shift $((OPTIND - 1))
-
-
-# check require command
-readonly require_command=('curl' 'jq' 'base64' 'convert')
-for command in "${require_command[@]}"
-do
-    type "${command}" >/dev/null 2>&1 || error "次のコマンドが必要です: ${command}"
-done
-
-
-# get username
-while read stdin
-do
-    set -- "${1:-${stdin}}"
-done
-
-if [ -n "${1}" ]; then
-    readonly USERNAME="${1}"
-else
-    error "ユーザーネームが入力されていません"
-fi
-
-
-# check options
-output_size="${output_size:-800}"
-if expr "${output_size}" : '[1-9][0-9]*$' >/dev/null; then
-    :
-else
-    error "画像の大きさは数値のみを入力してください"
-fi
-
-output_name="${output_name:-${HOME}/${USERNAME}.png}"
-if [ -e "${output_name%/*}" ]; then
-    :
-else
-    error "指定されたディレクトリは存在しません"
-fi
-
-
-# make tmpfile
-readonly TMPDIR="${TMP:-/tmp}/${0##*/}.$$"
+## temporary
+readonly TMPDIR="${TMP:-/tmp}/${ME}.$$"
 mkdir -p "${TMPDIR}"
-
+trap 'rm -r ${TMPDIR}' 0
 function makeTmpFile() {
     local filename="${TMPDIR}/${1:-$RANDOM.tmp}"
     mktemp "${filename}"
+    return 0
 }
 
-trap 'rm -r ${TMPDIR}' 0
+## check require command
+required_command=('curl' 'jq' 'base64' 'convert')
+for command in "${required_command[@]}"
+do
+    type "${command}" >/dev/null 2>&1 || error "requires command -- ${command}" "2"
+done
+
+
+# get and check argument, options
+## get option
+for OPTIONS in "${@-}"
+do
+    case "${OPTIONS}" in
+        '-h'|'--help' )
+            usage
+            exit 0
+            ;;
+        '-v'|'--version' )
+            echo "${VERSION}" 1>&2
+            exit 0
+            ;;
+        '-s'|'--size' )
+            if [[ -z "${2-}" ]] || [[ "${2-}" =~ ^-+ ]]; then
+                error "option requires an argument -- '${1}'" "-1"
+            fi
+            output_size="${2}"
+            shift 2
+            ;;
+        '-o'|'--output' )
+            if [[ -z "${2-}" ]] || [[ "${2-}" =~ ^-+ ]]; then
+                error "option requires an argument -- '${1}'" "-1"
+            fi
+            output_path="${2}"
+            shift 2
+            ;;
+        '--debug' )
+            echo "${ME} ${VERSION} debug mode"
+            set -x
+            shift 1
+            ;;
+        -* )
+            error "illegal option -- '${1}'" "-1"
+            ;;
+        * )
+            if [[ -n "${1-}" ]] && [[ ! "${1-}" =~ ^-+ ]]; then
+                args+=( "${1}" )
+                shift 1
+            fi
+            ;;
+    esac
+done
+
+## get username
+while read -t 1 stdin
+do
+    : "${args[0]:=${stdin}}"
+done
+if [[ -n "${args[0]-}" ]]; then
+    readonly username="${args[0]}"
+else
+    error "invaild argument" "-1"
+fi
+
+## check options
+### output size
+readonly output_size="${output_size:-800}"
+if ! [[ "${output_size}" =~ [1-9][0-9]*$ ]]; then
+    error "invaild option -- 'output_size'" "3"
+fi
+
+### output path
+output_path=${output_path:-./${username}.png}
+output_filename="${output_path##*/}"
+output_directory="$(dirname "${output_path}")"
+if [[ -e "${output_directory}" ]]; then
+    output_directory="$(
+        cd "${output_directory}"
+        pwd
+    )"
+    readonly output_path="${output_directory%/}/${output_filename}"
+else
+    error "invaild option -- 'output_path'" "4"
+fi
 
 
 # get skin
-function checkHttpCode() {
-    local http_code="$(echo "${1}" | jq -r 'select(has("http_code")) | .http_code')"
-    case "${http_code}" in
-        '200' ) return 0;;
-        '000' ) error "E42 (Network Error)" "42";;
-        *     ) return "${http_code}";;
+## check http status code
+function checkHttpStatusCode() {
+    local http_status_code="$(
+        echo "${1}" |
+        jq -r 'select(has("http_status_code")) | .http_status_code'
+    )"
+    case "${http_status_code}" in
+        '200' )
+            return 0
+            ;;
+        '000' )
+            return 5
+            ;;
+        * )
+            return "${http_status_code}"
+            ;;
     esac
 }
 
-function getUUID() {
-    local UUID_JSON=$(curl -s https://api.mojang.com/users/profiles/minecraft/"${USERNAME}" -w '{"http_code":"%{http_code}"}')
-    if checkHttpCode "${UUID_JSON}"; then
-        readonly UUID=$(echo "${UUID_JSON}" | jq -r 'select(has("id")) | .id')
+## get UUID
+function getUuid() {
+    local uuid_json="$(
+        curl -s https://api.mojang.com/users/profiles/minecraft/"${1}" \
+        -w '{"http_status_code":"%{http_code}"}'
+    )"
+    if checkHttpStatusCode "${uuid_json}"; then
+        uuid="$(
+            echo "${uuid_json}" |
+            jq -r 'select(has("id")) | .id'
+        )"
     else
-        error "E${?} (getUUID)" "${?}"
+        error "internal error -- 'getUuid()'" "${?}"
     fi
-}; getUUID "${USERNAME}";
+    return 0
+}; getUuid "${username}";
 
+## get skin URI and download
 function getSkinUri() {
-    local SKIN_JSON=$(curl -s https://sessionserver.mojang.com/session/minecraft/profile/"${UUID}" -w '{"http_code":"%{http_code}"}')
-    if checkHttpCode "${SKIN_JSON}"; then
-        local SKIN_URI=$(echo "${SKIN_JSON}" | jq -r 'select(has("properties")) | .properties[].value' | base64 -D | jq -r '.textures.SKIN.url')
-        curl -s -o "$(makeTmpFile skin.png)" "${SKIN_URI}"
+    local skin_json="$(
+        curl -s https://sessionserver.mojang.com/session/minecraft/profile/"${1}" \
+        -w '{"http_status_code":"%{http_code}"}'
+    )"
+    if checkHttpStatusCode "${skin_json}"; then
+        local skin_uri="$(
+            echo "${skin_json}"                                     |
+            jq -r 'select(has("properties")) | .properties[].value' |
+            base64 -D                                               |
+            jq -r '.textures.SKIN.url'
+        )"
+        curl -s -o "$(makeTmpFile skin.png)" "${skin_uri}"
     else
-        error "E${?} (getSkinUri)" "${?}"
+        error "internal error -- 'getSkinUri()'" "${?}"
     fi
-}; getSkinUri;
+    return 0
+}; getSkinUri "${uuid}";
 
 
-# convert
+## convert
 function skinConvert() {
-    convert -crop 8x8+8+8 "${TMPDIR}/skin.png" "${TMPDIR}/face.png"
-    convert -crop 8x8+40+8 "${TMPDIR}/skin.png" "${TMPDIR}/hair.png"
-    convert "${TMPDIR}/face.png" "${TMPDIR}/hair.png" -composite "${TMPDIR}/head.png"
-    convert -scale x"${output_size}" "${TMPDIR}/head.png" "${output_name}"
-}; skinConvert && echo "${output_name}";
+    convert -crop 8x8+8+8 "${TMPDIR}/skin.png" "$(makeTmpFile face.png)" && :
+        [[ "${?}" -ne "0" ]] && error "internal error -- 'skinConvert()'" "6"
+    convert -crop 8x8+40+8 "${TMPDIR}/skin.png" "$(makeTmpFile hair.png)" && :
+        [[ "${?}" -ne "0" ]] && error "internal error -- 'skinConvert()'" "6"
+    convert "${TMPDIR}/face.png" "${TMPDIR}/hair.png" -composite "$(makeTmpFile head.png)" && :
+        [[ "${?}" -ne "0" ]] && error "internal error -- 'skinConvert()'" "6"
+    convert -scale x"${output_size}" "${TMPDIR}/head.png" "${output_path}" && :
+        [[ "${?}" -ne "0" ]] && error "internal error -- 'skinConvert()'" "7"
+    return 0
+}; skinConvert && echo "${output_path}" && exit 0;
